@@ -11,9 +11,8 @@ import (
 	"strconv"
 )
 
-
 type Data struct {
-	Products []Product  `json:"results"`
+	Products    []Product  `json:"results"`
 	Total       float64 `json:"total"`
 }
 
@@ -23,7 +22,6 @@ type Product struct {
 	UnitPrice   float64 `json:"unit_price"`
 	Description string  `json:"description"`
 }
-
 
 func main() {
 
@@ -41,16 +39,29 @@ func main() {
 		panic(err)
 	}
 
-	//Find links on the target page
-	fmt.Println("\n\nGetting links for " + targetUrl +  "\n\n")
-	bow.Find("#productLister .productInner h3 a").Each(func(_ int, s *goquery.Selection) {
-		url, _ := s.Attr("href")
-		product := getProduct(url)
-		data.Products = append(data.Products, product)
+	// Create channels
+	chProducts := make(chan Product)
+	chDone := make(chan bool)
 
-		//increment the total
-		data.Total += product.UnitPrice
+
+	//Find links on the target page
+	fmt.Println("\n\nGetting links for " + targetUrl + "\n\n")
+	i := 0
+	bow.Find("#productLister .productInner h3 a").Each(func(_ int, s *goquery.Selection) {
+		i++
+		url, _ := s.Attr("href")
+		go getProduct(url, chProducts, chDone) //goroutine (nothing returned
 	})
+
+	// Subscribe to the channels
+	for c := 0; c < i; {
+		select {
+		case product := <-chProducts:
+			data.Products = append(data.Products, product)
+		case <-chDone:
+			c++
+		}
+	}
 
 	//Create json
 	b, _ := json.Marshal(data)
@@ -62,11 +73,16 @@ func main() {
 	fmt.Println("\n\n------FINISHED------\n\n")
 }
 
-func getProduct(url string) Product {
+func getProduct(url string, ch chan Product, chDone chan bool) {
 
 	var product Product
 
-	fmt.Println("Scraping " +  url)
+	defer func() {
+		// Notify when function completes
+		chDone <- true
+	}()
+
+	fmt.Println("Scraping " + url)
 
 	bow := surf.NewBrowser()
 	err := bow.Open(url)
@@ -98,7 +114,7 @@ func getProduct(url string) Product {
 		product.Description = description
 	})
 
-	return product
+	ch <- product //assign to channel
 }
 
 func stringToFloat(price string) float64 {
